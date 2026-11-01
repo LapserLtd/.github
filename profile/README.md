@@ -1,7 +1,7 @@
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="./assets/lapser-profile-hero-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="./assets/lapser-profile-hero-light.svg">
-  <img alt="Lapser wordmark beside a decorative abstract track loop" width="1200" src="./assets/lapser-profile-hero-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="./assets/lapser-wordmark-on-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="./assets/lapser-wordmark-on-light.svg">
+  <img alt="Lapser." width="360" src="./assets/lapser-wordmark-on-light.svg">
 </picture>
 
 **Lapser. Beyond the race.**
