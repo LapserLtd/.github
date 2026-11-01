@@ -1,0 +1,137 @@
+# Reusable CI for PHP (Composer + PHPUnit) repos.
+#
+# Caller (in the app repo, .github/workflows/ci.yml):
+#
+#   jobs:
+#     ci:
+#       uses: LapserLtd/.github/.github/workflows/php-ci.yml@main
+#       with:
+#         postgres: true
+#
+# Required status check for branch protection: "ci / verify".
+#
+# Every step gates. With postgres: true a throwaway Postgres service is started
+# and DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD/DB_SSLMODE point at it. The
+# credentials below are test-only and exist nowhere else.
+
+name: PHP CI
+
+on:
+  workflow_call:
+    inputs:
+      php-version:
+        type: string
+        default: '8.3'
+      extensions:
+        description: Comma-separated PHP extensions for setup-php.
+        type: string
+        default: mbstring, intl, pdo, pdo_pgsql, pgsql, pdo_sqlite, gd, zip, bcmath, curl
+      working-directory:
+        type: string
+        default: '.'
+      postgres:
+        description: Start a Postgres service container for the tests.
+        type: boolean
+        default: false
+      postgres-version:
+        type: string
+        default: '16'
+      setup:
+        description: Command run after composer install, before phpunit (e.g. schema load). Empty skips.
+        type: string
+        default: ''
+      phpunit:
+        description: Test command.
+        type: string
+        default: vendor/bin/phpunit
+      env:
+        description: Extra NON-SECRET environment, one KEY=VALUE per line.
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    services:
+      postgres:
+        # An empty image means the service is not started.
+        image: ${{ inputs.postgres && format('postgres:{0}', inputs.postgres-version) || '' }}
+        env:
+          POSTGRES_DB: lapser_test
+          POSTGRES_USER: lapser_test
+          POSTGRES_PASSWORD: test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lapser_test -d lapser_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DB_DRIVER: pgsql
+      DB_HOST: 127.0.0.1
+      DB_PORT: '5432'
+      DB_NAME: lapser_test
+      DB_USER: lapser_test
+      DB_PASSWORD: test_password
+      DB_SSLMODE: disable
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: ${{ inputs.php-version }}
+          extensions: ${{ inputs.extensions }}
+          coverage: none
+          tools: composer:v2
+
+      - name: Export extra env
+        if: inputs.env != ''
+        env:
+          EXTRA_ENV: ${{ inputs.env }}
+        run: |
+          printf '%s\n' "$EXTRA_ENV" | while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            if ! printf '%s' "$line" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*='; then
+              echo "::error::env input line is not KEY=VALUE: ${line%%=*}"
+              exit 1
+            fi
+            printf '%s\n' "$line" >> "$GITHUB_ENV"
+          done
+
+      - name: composer validate
+        run: composer validate --no-check-publish --no-interaction
+
+      - name: composer install
+        id: install
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      - name: php -l
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          find . -name '*.php' -not -path './vendor/*' -not -path './node_modules/*' -print0 \
+            | xargs -0 -n1 -P4 php -l \
+            | { grep -v '^No syntax errors detected' || true; }
+
+      - name: Setup
+        if: inputs.setup != '' && !cancelled() && steps.install.outcome == 'success'
+        env:
+          CMD: ${{ inputs.setup }}
+        run: eval "$CMD"
+
+      - name: PHPUnit
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        env:
+          CMD: ${{ inputs.phpunit }}
+        run: eval "$CMD"
